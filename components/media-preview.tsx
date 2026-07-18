@@ -102,7 +102,7 @@ export function MediaPreview({ media }: { media: NormalizedMedia }) {
     setActive((index) => (index + 1) % items.length);
   }
 
-  function PreviewContent({ modal = false }: { modal?: boolean }) {
+  function renderPreviewContent(modal = false) {
     if (selected.kind === "video") {
       return (
         <video
@@ -145,11 +145,11 @@ export function MediaPreview({ media }: { media: NormalizedMedia }) {
                 {musicPlaying ? <Pause size={20} /> : <Music2 size={20} />}
               </button>
             )}
-            <a href={selectedDownload} aria-label="Unduh media yang sedang dibuka" title="Unduh media"><ArrowDownToLine size={20} /></a>
+            <a href={selectedDownload} download={selectedFilename} aria-label="Unduh media yang sedang dibuka" title="Unduh media"><ArrowDownToLine size={20} /></a>
             <button type="button" onClick={() => setViewerOpen(false)} aria-label="Tutup tampilan penuh" title="Tutup"><X size={22} /></button>
           </div>
         </div>
-        <div className="media-viewer-stage"><PreviewContent modal /></div>
+        <div className="media-viewer-stage">{renderPreviewContent(true)}</div>
         {items.length > 1 && (
           <>
             <button className="viewer-nav viewer-prev" type="button" onClick={previousItem} aria-label="Media sebelumnya"><ChevronLeft size={28} /></button>
@@ -187,12 +187,12 @@ export function MediaPreview({ media }: { media: NormalizedMedia }) {
               {musicPlaying ? <Pause size={17} /> : <Music2 size={17} />}
             </button>
           )}
-          <a href={selectedDownload} aria-label={`Unduh ${selected.label}`} title={`Unduh ${selected.label}`}><ArrowDownToLine size={17} /></a>
+          <a href={selectedDownload} download={selectedFilename} aria-label={`Unduh ${selected.label}`} title={`Unduh ${selected.label}`}><ArrowDownToLine size={17} /></a>
           {selected.kind !== "audio" && (
             <button type="button" onClick={() => setViewerOpen(true)} aria-label="Buka tampilan penuh" title="Tampilan penuh"><Expand size={17} /></button>
           )}
         </div>
-        <PreviewContent />
+        {renderPreviewContent(false)}
       </div>
 
       {items.length > 1 && (
