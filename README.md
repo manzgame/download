@@ -1,4 +1,4 @@
-# DATZON DOWNLOADER 2.0
+# DATZON DOWNLOADER 3.2
 
 Downloader media multi-provider berbasis Next.js dengan preview langsung, tema terang/gelap, aksen warna, skeleton loading, galeri media, statistik TikTok, pemutar Spotify, Pinterest search, serta fallback Cobalt untuk platform lain.
 
