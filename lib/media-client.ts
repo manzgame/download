@@ -19,6 +19,7 @@ interface ProxyMediaOptions {
 
 export function proxyMediaUrl(url?: string, options?: ProxyMediaOptions) {
   if (!url) return "";
+  if (url.startsWith("blob:") || url.startsWith("data:")) return url;
 
   const applyOptions = (target: string) => {
     const [base, hash = ""] = target.split("#", 2);
