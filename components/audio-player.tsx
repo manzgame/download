@@ -9,6 +9,43 @@ interface AudioPlayerProps {
   artwork?: string;
 }
 
+const artworkColorCache = new Map<string, string[]>();
+
+function artworkCacheKey(value: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `datzon-artwork-colors-${(hash >>> 0).toString(36)}`;
+}
+
+function readCachedColors(artwork?: string) {
+  if (!artwork) return [];
+  const memory = artworkColorCache.get(artwork);
+  if (memory?.length) return memory;
+  if (typeof window === "undefined") return [];
+  try {
+    const stored = sessionStorage.getItem(artworkCacheKey(artwork));
+    const parsed = stored ? JSON.parse(stored) : null;
+    if (Array.isArray(parsed) && parsed.length >= 3 && parsed.every((item) => typeof item === "string")) {
+      const colors = parsed.slice(0, 3);
+      artworkColorCache.set(artwork, colors);
+      return colors;
+    }
+  } catch {}
+  return [];
+}
+
+function rememberColors(artwork: string | undefined, colors: string[]) {
+  if (!artwork || colors.length < 3) return;
+  artworkColorCache.set(artwork, colors);
+  if (typeof window === "undefined") return;
+  try {
+    sessionStorage.setItem(artworkCacheKey(artwork), JSON.stringify(colors.slice(0, 3)));
+  } catch {}
+}
+
 function formatTime(seconds: number) {
   if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
   const minutes = Math.floor(seconds / 60);
@@ -86,7 +123,9 @@ export function AudioPlayer({ src, title, artwork }: AudioPlayerProps) {
     setFailed(false);
   }, [src]);
 
-  useEffect(() => setColors([]), [artwork]);
+  useEffect(() => {
+    setColors(readCachedColors(artwork));
+  }, [artwork]);
 
   async function togglePlayback() {
     const audio = audioRef.current;
@@ -120,11 +159,19 @@ export function AudioPlayer({ src, title, artwork }: AudioPlayerProps) {
   function captureArtworkColors() {
     const image = artworkRef.current;
     if (!image) return;
+    const cached = readCachedColors(artwork);
+    if (cached.length) {
+      setColors(cached);
+      return;
+    }
     try {
       const next = dominantColors(image);
-      if (next) setColors(next);
+      if (next) {
+        setColors(next);
+        rememberColors(artwork, next);
+      }
     } catch {
-      setColors([]);
+      // Pertahankan warna terakhir. Tema tidak perlu membuat sampul mendadak amnesia.
     }
   }
 
@@ -154,7 +201,7 @@ export function AudioPlayer({ src, title, artwork }: AudioPlayerProps) {
       <div className="audio-color-wash" />
       <div className="audio-artwork-wrap">
         {artwork ? (
-          <img ref={artworkRef} className="audio-artwork" src={artwork} alt="Sampul media" onLoad={captureArtworkColors} />
+          <img ref={artworkRef} className="audio-artwork" src={artwork} alt="Sampul media" crossOrigin="anonymous" onLoad={captureArtworkColors} />
         ) : (
           <div className="audio-artwork audio-artwork-fallback" />
         )}
