@@ -137,7 +137,7 @@ function waitForAudioReady(url: string, timeoutMs = 36_000) {
     audio.preload = "auto";
     audio.addEventListener("canplay", () => finish(), { once: true });
     audio.addEventListener("error", () => finish(new Error("File audio dari provider tidak dapat dimuat untuk preview.")), { once: true });
-    audio.src = proxyMediaUrl(url);
+    audio.src = url.startsWith("blob:") || url.startsWith("data:") ? url : proxyMediaUrl(url);
     audio.load();
   });
 }
@@ -168,6 +168,57 @@ function LoadingSkeleton() {
       </div>
     </section>
   );
+}
+
+function GalleryVideoThumbnail({ src }: { src: string }) {
+  const [ready, setReady] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    setReady(false);
+    setFailed(false);
+  }, [src]);
+
+  return (
+    <div className={`gallery-video-thumb ${ready ? "ready" : ""} ${failed ? "failed" : ""}`}>
+      {!ready && <ImageIcon size={20} aria-hidden="true" />}
+      {!failed && (
+        <video
+          src={proxyMediaUrl(src)}
+          muted
+          playsInline
+          preload="auto"
+          aria-hidden="true"
+          onLoadedMetadata={(event) => {
+            const video = event.currentTarget;
+            try {
+              const target = Number.isFinite(video.duration) && video.duration > 0
+                ? Math.min(0.12, Math.max(0.02, video.duration / 20))
+                : 0.06;
+              video.currentTime = target;
+            } catch {
+              setReady(true);
+            }
+          }}
+          onLoadedData={() => setReady(true)}
+          onSeeked={() => setReady(true)}
+          onError={() => {
+            setReady(false);
+            setFailed(true);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function SafeThumbnail({ src }: { src: string }) {
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => setFailed(false), [src]);
+
+  if (failed) return <ImageIcon size={20} aria-hidden="true" />;
+  return <img src={proxyMediaUrl(src)} alt="" onError={() => setFailed(true)} />;
 }
 
 function DownloadItem({
@@ -208,10 +259,10 @@ function DownloadItem({
   return (
     <article className={`download-item ${isTikTokGallery ? "download-item-gallery" : ""} ${hideThumbnail ? "download-item-no-thumb" : ""}`}>
       <div className={`download-kind kind-${item.kind}`}>
-        {!hideThumbnail && item.thumbnail ? (
-          <img src={proxyMediaUrl(item.thumbnail)} alt="" />
-        ) : isTikTokGallery && item.kind === "video" ? (
-          <video src={`${proxyMediaUrl(item.url)}#t=0.08`} muted playsInline preload="metadata" aria-hidden="true" />
+        {isTikTokGallery && item.kind === "video" ? (
+          <GalleryVideoThumbnail src={item.url} />
+        ) : !hideThumbnail && item.thumbnail ? (
+          <SafeThumbnail src={item.thumbnail} />
         ) : (
           <Icon size={19} />
         )}
@@ -394,6 +445,7 @@ export default function HomePage() {
   const [profileError, setProfileError] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const preparedAudioUrlRef = useRef<string | null>(null);
 
   const platform = useMemo(() => detectPlatform(url), [url]);
   const validInput = isProcessableInput(url.trim());
@@ -415,6 +467,12 @@ export default function HomePage() {
         localStorage.removeItem("datzon-history");
       }
     }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (preparedAudioUrlRef.current) URL.revokeObjectURL(preparedAudioUrlRef.current);
+    };
   }, []);
 
   useEffect(() => {
@@ -477,6 +535,74 @@ export default function HomePage() {
     localStorage.setItem("datzon-history", JSON.stringify(next));
   }
 
+  function revokePreparedAudio() {
+    if (!preparedAudioUrlRef.current) return;
+    URL.revokeObjectURL(preparedAudioUrlRef.current);
+    preparedAudioUrlRef.current = null;
+  }
+
+  async function prepareSpotifyResponse(data: DownloadApiResponse, signal: AbortSignal) {
+    if (data.platform.id !== "spotify" || !data.media) return data;
+
+    const audioItem = data.media.downloads.find((item) => item.kind === "audio");
+    if (!audioItem?.url) throw new Error("Audio Spotify tidak ditemukan oleh provider.");
+
+    const filename = filenameForMedia(data.media.title, "", audioItem.format || "mp3");
+    const preparedUrl = proxyMediaUrl(audioItem.url, {
+      download: true,
+      filename,
+      cover: data.media.thumbnail,
+      title: data.media.title,
+      artist: data.media.author,
+      expectedDuration: data.media.duration,
+    });
+
+    const preparedRequest = await fetch(preparedUrl, {
+      method: "GET",
+      cache: "no-store",
+      signal,
+    });
+
+    if (!preparedRequest.ok) {
+      let message = "Audio Spotify belum siap diputar atau diunduh.";
+      try {
+        const payload = await preparedRequest.json() as { error?: string };
+        if (payload.error) message = payload.error;
+      } catch {
+        const text = await preparedRequest.text().catch(() => "");
+        if (text.trim()) message = text.trim().slice(0, 240);
+      }
+      throw new Error(message);
+    }
+
+    const rawBlob = await preparedRequest.blob();
+    if (rawBlob.size < 24_000) throw new Error("Berkas audio Spotify terlalu kecil atau belum selesai diproses.");
+    const audioBlob = rawBlob.type.startsWith("audio/")
+      ? rawBlob
+      : new Blob([rawBlob], { type: "audio/mpeg" });
+    const objectUrl = URL.createObjectURL(audioBlob);
+
+    try {
+      await waitForAudioReady(objectUrl, 18_000);
+    } catch (audioError) {
+      URL.revokeObjectURL(objectUrl);
+      throw audioError;
+    }
+
+    revokePreparedAudio();
+    preparedAudioUrlRef.current = objectUrl;
+
+    return {
+      ...data,
+      media: {
+        ...data.media,
+        preview: { ...data.media.preview, audio: objectUrl },
+        downloads: data.media.downloads.map((item) => item.kind === "audio" ? { ...item, url: objectUrl } : item),
+        gallery: data.media.gallery?.map((item) => item.kind === "audio" ? { ...item, url: objectUrl } : item),
+      },
+    } satisfies DownloadApiResponse;
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const cleanUrl = url.trim();
@@ -487,6 +613,7 @@ export default function HomePage() {
       return;
     }
 
+    revokePreparedAudio();
     setLoading(true);
     setResponse(null);
     setError("");
@@ -494,7 +621,7 @@ export default function HomePage() {
     setProfileError("");
 
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 90_000);
+    const timeout = setTimeout(() => controller.abort(), platform.id === "spotify" ? 150_000 : 90_000);
 
     try {
       const request = await fetch("/api/download", {
@@ -503,9 +630,10 @@ export default function HomePage() {
         body: JSON.stringify({ url: cleanUrl }),
         signal: controller.signal,
       });
-      const data = (await request.json()) as DownloadApiResponse;
+      let data = (await request.json()) as DownloadApiResponse;
 
       if (!request.ok || !data.success || !data.media) throw new Error(data.error || "Media gagal diproses.");
+      if (data.platform.id === "spotify") data = await prepareSpotifyResponse(data, controller.signal);
 
       setResponse(data);
       saveHistory(data);
@@ -550,6 +678,7 @@ export default function HomePage() {
   }
 
   function resetDownloader() {
+    revokePreparedAudio();
     setUrl("");
     setResponse(null);
     setError("");
